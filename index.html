@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 :root{
   --bg:#ffffff; --bg2:#f4f7fa; --card:#ffffff; --card2:#eef3f8;
@@ -544,13 +545,50 @@ function loadSaved(){ try{ var s=localStorage.getItem('tableroCobranzaV1'); if(!
 function clearSaved(){ try{ localStorage.removeItem('tableroCobranzaV1'); }catch(e){} }
 function showClear(s){ var b=document.getElementById('clearSaved'); if(b) b.style.display=s?'inline-block':'none'; }
 function status(msg,ok){ var el=document.getElementById('ustatus'); el.textContent=msg; el.style.color=ok===false?'var(--red)':'var(--teal)'; }
+/* ===================== SUPABASE: datos compartidos en la liga ===================== */
+/* 1) Pega aquí tu Project URL y tu anon key (Supabase → Project Settings → API).
+      Son PÚBLICAS por diseño, no son un secreto.
+   2) Crea un bucket de Storage llamado igual que SUPA_BUCKET (abajo) y márcalo como público. */
+const SUPABASE_URL      = 'https://zzscjkshtfxczpoxeinx.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_rwA_swucGRHgbpvIbY8ELA_2PCMjIxR';
+const SUPA_BUCKET = 'tableros';
+const SUPA_FILE   = 'cobranza.json';
+var _supa = null;
+try{ if(window.supabase && SUPABASE_URL.indexOf('PEGA_AQUI')<0){ _supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); } }catch(e){ _supa=null; }
+
+/* Sube (publica) los datos para que TODOS los vean en la liga */
+async function saveRemote(d){
+  if(!_supa) return false;
+  try{
+    var json = JSON.stringify(encodeStore(d));
+    var blob = new Blob([json], {type:'application/json'});
+    var res = await _supa.storage.from(SUPA_BUCKET).upload(SUPA_FILE, blob, {upsert:true, cacheControl:'0', contentType:'application/json'});
+    return !res.error;
+  }catch(e){ return false; }
+}
+/* Lee los datos publicados (lectura pública, sin caché) */
+async function loadRemote(){
+  try{
+    if(SUPABASE_URL.indexOf('PEGA_AQUI')>=0) return null;
+    var url = SUPABASE_URL + '/storage/v1/object/public/' + SUPA_BUCKET + '/' + SUPA_FILE + '?t=' + Date.now();
+    var r = await fetch(url, {cache:'no-store'});
+    if(!r.ok) return null;
+    var j = await r.json();
+    return decodeFolios(j);
+  }catch(e){ return null; }
+}
+/* ================================================================================== */
+
 function handleFile(file){ if(!file)return; status('Leyendo '+file.name+'…');
   var fr=new FileReader();
   fr.onload=function(e){ try{
     var wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});
     var d=processWorkbook(wb); setData(d);
     var ok=saveData(d); showClear(ok);
-    status('✓ '+file.name+' · '+d.pendientes.length+' pendientes · '+(ok?'guardado en este navegador':'cargado (archivo muy grande para guardar)'), true);
+    status('✓ '+file.name+' · '+d.pendientes.length+' pendientes · guardado. Publicando en la liga…', true);
+    saveRemote(d).then(function(remoteOk){
+      status('✓ '+file.name+' · '+d.pendientes.length+' pendientes · '+(remoteOk?'publicado en la liga (todos lo verán) ✓':'guardado solo en este navegador (revisa la conexión a Supabase)'), remoteOk!==false);
+    });
   }catch(err){ status('No se pudo leer: '+err.message, false); }
   };
   fr.onerror=function(){status('Error al abrir el archivo.',false);};
@@ -569,6 +607,10 @@ SNAPSHOT.tot_cobrado = SNAPSHOT.tot_cobrado_2026; SNAPSHOT.n_cobrado = SNAPSHOT.
 var _saved=loadSaved();
 if(_saved && _saved.pendientes){ setData(_saved); showClear(true); status('Mostrando tus datos guardados ('+_saved.pendientes.length+' pendientes). Carga un Excel para actualizar.', true); }
 else { setData(SNAPSHOT); }
+/* Si hay datos publicados en la liga (Supabase), se muestran a todos los que entren */
+loadRemote().then(function(remote){
+  if(remote && remote.pendientes){ setData(remote); showClear(false); status('Mostrando los datos publicados en la liga ('+remote.pendientes.length+' pendientes). Sube un Excel para actualizarlos.', true); }
+});
 </script>
 </body>
 </html>
